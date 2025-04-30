@@ -8,7 +8,7 @@ import logging
 import json
 from collections import deque
 import atexit
-import socket
+import pytz
 
 app = Flask(__name__)
 
@@ -28,13 +28,15 @@ last_update_time = None
 update_thread = None
 shutdown_flag = threading.Event()
 
+timezone = pytz.timezone('Europe/Helsinki')
+
 CONFIG = {
     'graph_file': 'power_graph.html',
     'data_file': 'power_data.json',
     'backup_file': 'power_data_backup.json',
     'update_interval': 5,
-    'extra_wait': 60,
-    'server_port': int(os.getenv('PORT', 10000))  # Render uses this
+    'extra_wait': 240,  # Increased for Render startup latency
+    'server_port': int(os.getenv('PORT', 10000))
 }
 
 def round_to_5min(dt):
@@ -50,12 +52,12 @@ def update_graph():
     global last_update_time
     try:
         with graph_lock:
-            x = [datetime.datetime.fromisoformat(ts) for ts in graph_data['x']]
+            x = [datetime.datetime.fromisoformat(ts).astimezone(timezone) for ts in graph_data['x']]
             y = graph_data['y'][:]
         fig = go.Figure(data=go.Scatter(x=x, y=y, mode='lines+markers'))
         fig.update_layout(
             title='Outlet Power Status',
-            xaxis_title='Time',
+            xaxis_title='Time (Europe/Helsinki)',
             yaxis_title='Power (0 or 1)',
             template='plotly_white'
         )
@@ -86,12 +88,12 @@ def load_data():
         logging.error(f'Data load error: {e}')
 
 def get_time_to_next_mark():
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(datetime.timezone.utc)
     next_mark = round_to_5min(now + datetime.timedelta(minutes=5))
     return (next_mark - now).total_seconds(), next_mark
 
 def check_and_update_status():
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(datetime.timezone.utc)
     current_mark = round_to_5min(now)
     with graph_lock:
         if not graph_data['x'] or round_to_5min(datetime.datetime.fromisoformat(graph_data['x'][-1])) < current_mark:
@@ -117,10 +119,8 @@ def stop_background_thread():
 @app.route('/power_status', methods=['POST'])
 def power_status():
     try:
-        timestamp = request.form.get('timestamp')
-        client_ip = request.form.get('client_ip', 'unknown')
-        dt = datetime.datetime.fromisoformat(timestamp)
-        rounded = round_to_5min(dt).isoformat()
+        received_at = datetime.datetime.now(datetime.timezone.utc)
+        rounded = round_to_5min(received_at).isoformat()
         with graph_lock:
             if graph_data['x'] and round_to_5min(datetime.datetime.fromisoformat(graph_data['x'][-1])).isoformat() == rounded:
                 graph_data['y'][-1] = 1
