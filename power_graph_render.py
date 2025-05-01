@@ -9,6 +9,8 @@ import json
 from collections import deque
 import atexit
 import pytz
+import subprocess
+import requests
 
 app = Flask(__name__)
 
@@ -35,7 +37,7 @@ CONFIG = {
     'data_file': 'power_data.json',
     'backup_file': 'power_data_backup.json',
     'update_interval': 5,
-    'extra_wait': 240,  # Increased for Render startup latency
+    'extra_wait': 240,
     'server_port': int(os.getenv('PORT', 10000))
 }
 
@@ -151,6 +153,31 @@ def status():
         'latest': latest,
         'last_update': last_update_time.isoformat() if last_update_time else 'never'
     })
+
+@app.route('/status_text')
+def status_text():
+    try:
+        with graph_lock:
+            if not graph_data['x']:
+                return '<p>Status unknown</p>'
+            latest_time = datetime.datetime.fromisoformat(graph_data['x'][-1]).astimezone(timezone)
+            latest_status = graph_data['y'][-1]
+
+        status_str = "ON" if latest_status == 1 else "OFF"
+        color = "green" if latest_status == 1 else "red"
+        time_str = latest_time.strftime("%H:%M")
+
+        html = f"""
+        <html><head><title>Power Outlet Status</title></head>
+        <body style='font-family: sans-serif; text-align: center; padding-top: 50px;'>
+            <h1 style='color: {color};'>Power outlet status: {status_str}</h1>
+            <p>As of: {time_str} (Europe/Helsinki)</p>
+        </body></html>
+        """
+        return html
+    except Exception as e:
+        logging.error(f'Status text error: {e}')
+        return '<p>Error generating status</p>'
 
 def cleanup():
     stop_background_thread()
