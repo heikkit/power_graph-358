@@ -38,6 +38,7 @@ CONFIG = {
     'backup_file': 'power_data_backup.json',
     'update_interval': 5,
     'extra_wait': 240,
+    'grace_period_sec': 240,
     'server_port': int(os.getenv('PORT', 10000))
 }
 
@@ -160,12 +161,21 @@ def status_text():
         with graph_lock:
             if not graph_data['x']:
                 return '<p>Status unknown</p>'
-            latest_time = datetime.datetime.fromisoformat(graph_data['x'][-1]).astimezone(timezone)
+            latest_dt_utc = datetime.datetime.fromisoformat(graph_data['x'][-1]).replace(tzinfo=datetime.timezone.utc)
+            latest_local = latest_dt_utc.astimezone(timezone)
             latest_status = graph_data['y'][-1]
 
-        status_str = "ON" if latest_status == 1 else "OFF"
-        color = "green" if latest_status == 1 else "red"
-        time_str = latest_time.strftime("%H:%M")
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        age_sec = (now_utc - latest_dt_utc).total_seconds()
+
+        if age_sec > CONFIG['grace_period_sec']:
+            status_str = "OFF"
+            color = "red"
+        else:
+            status_str = "ON" if latest_status == 1 else "OFF"
+            color = "green" if latest_status == 1 else "red"
+
+        time_str = latest_local.strftime("%H:%M")
 
         html = f"""
         <html><head><title>Power Outlet Status</title></head>
