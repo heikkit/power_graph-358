@@ -38,7 +38,7 @@ CONFIG = {
     'backup_file': 'power_data_backup.json',
     'update_interval': 5,
     'extra_wait': 240,
-    'grace_period_sec': 240,
+    'grace_period_sec': 60,  # 1-minute grace period
     'server_port': int(os.getenv('PORT', 10000))
 }
 
@@ -166,9 +166,24 @@ def status_text():
             latest_status = graph_data['y'][-1]
 
         now_utc = datetime.datetime.now(datetime.timezone.utc)
-        age_sec = (now_utc - latest_dt_utc).total_seconds()
-
-        if age_sec > CONFIG['grace_period_sec']:
+        
+        # Calculate the time of the next expected POST (next 5-minute mark after the latest data point)
+        latest_dt_rounded = round_to_5min(latest_dt_utc)
+        next_expected_post = latest_dt_rounded
+        
+        # If the latest data point is already at a 5-minute mark and has a status of 1
+        # then the next expected post is 5 minutes later
+        if latest_dt_rounded == latest_dt_utc and latest_status == 1:
+            next_expected_post = latest_dt_rounded + datetime.timedelta(minutes=5)
+        # If it's not at a 5-minute mark or status is 0, the next expected post is the next 5-minute mark
+        elif latest_dt_rounded <= latest_dt_utc:
+            next_expected_post = latest_dt_rounded + datetime.timedelta(minutes=5)
+            
+        # Add the grace period
+        grace_period_end = next_expected_post + datetime.timedelta(seconds=CONFIG['grace_period_sec'])
+        
+        # Determine status
+        if now_utc > grace_period_end:
             status_str = "OFF"
             color = "red"
         else:
