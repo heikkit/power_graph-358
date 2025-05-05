@@ -1,5 +1,2 @@
 flask
-plotly
-pytz
-requests
-gunicorn
+matplotlib
