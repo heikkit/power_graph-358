@@ -1,9 +1,11 @@
 services:
   - type: web
-    name: power-status-tracker
+    name: power-graph
     env: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python power_graph_render.py
-    plan: free
-    region: oregon
-    runtime: python
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 10000
