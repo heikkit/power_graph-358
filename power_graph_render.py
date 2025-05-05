@@ -9,8 +9,6 @@ import json
 from collections import deque
 import atexit
 import pytz
-import subprocess
-import requests
 
 app = Flask(__name__)
 
@@ -50,6 +48,39 @@ def round_to_5min(dt):
     else:
         dt = dt.replace(minute=rounded)
     return dt.replace(second=0, microsecond=0)
+
+def backfill_missing_data(current_time):
+    """
+    Backfill missing data points with zeros when server wakes up from sleep
+    """
+    with graph_lock:
+        if not graph_data['x']:
+            # No previous data, nothing to backfill
+            return False
+        
+        # Get the last recorded timestamp and convert to datetime
+        last_timestamp = datetime.datetime.fromisoformat(graph_data['x'][-1])
+        current_mark = round_to_5min(current_time)
+        last_mark = round_to_5min(last_timestamp)
+        
+        # Check if there's a gap (more than one 5-min interval) between last record and now
+        if (current_mark - last_mark).total_seconds() > 5 * 60:
+            logging.info(f"Detected gap from {last_mark} to {current_mark}. Backfilling...")
+            
+            # Start from the next 5-min mark after the last recorded timestamp
+            backfill_time = last_mark + datetime.timedelta(minutes=5)
+            
+            # Continue until we reach the current 5-min mark (exclusive)
+            while backfill_time < current_mark:
+                # Add a data point with value 0 for each missing 5-min interval
+                graph_data['x'].append(backfill_time.isoformat())
+                graph_data['y'].append(0)
+                logging.info(f"Backfilled data point at {backfill_time} with value 0")
+                backfill_time += datetime.timedelta(minutes=5)
+            
+            return True
+    
+    return False
 
 def update_graph():
     global last_update_time
@@ -123,6 +154,11 @@ def stop_background_thread():
 def power_status():
     try:
         received_at = datetime.datetime.now(datetime.timezone.utc)
+        
+        # First, check if we need to backfill missing data
+        backfilled = backfill_missing_data(received_at)
+        
+        # Now handle the current POST
         rounded = round_to_5min(received_at).isoformat()
         with graph_lock:
             if graph_data['x'] and round_to_5min(datetime.datetime.fromisoformat(graph_data['x'][-1])).isoformat() == rounded:
@@ -130,8 +166,11 @@ def power_status():
             else:
                 graph_data['x'].append(rounded)
                 graph_data['y'].append(1)
+        
+        # Update the graph with both backfilled data and current POST
         threading.Thread(target=update_graph, daemon=True).start()
-        return jsonify({'status': 'success'})
+        
+        return jsonify({'status': 'success', 'backfilled': backfilled})
     except Exception as e:
         logging.error(f'POST error: {e}')
         return jsonify({'status': 'error', 'message': str(e)}), 500
